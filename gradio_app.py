@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import gradio as gr
 import spaces
 from PIL import Image
@@ -14,7 +13,7 @@ from main import run as run_model
 DESCRIPTION = '''# ReNoise: Real Image Inversion Through Iterative Noising
 This is a demo for our ''ReNoise: Real Image Inversion Through Iterative Noising'' [paper](https://garibida.github.io/ReNoise-Inversion/). Code is available [here](https://github.com/garibida/ReNoise-Inversion)
 Our ReNoise inversion technique can be applied to various diffusion models, including recent few-step ones such as SDXL-Turbo.
-This demo preform real image editing using our ReNoise inversion. The input image is resize to size of 512x512, the optimal size of SDXL Turbo.
+This demo preforms real image editing using our ReNoise inversion. The input image is resized to size of 512x512, the optimal size of SDXL Turbo.
 '''
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -45,7 +44,9 @@ def main_pipeline(
         rest_step_range_end: int,
         noise_regularization_lambda_ac: float,
         noise_regularization_lambda_kl: float,
-        perform_noise_correction: bool):
+        perform_noise_correction: bool,
+        fixed_point_iterations: int,
+        fixed_point_inversion_steps: int ):
 
         global prev_configs, prev_inv_latents, prev_images, prev_noises
 
@@ -68,7 +69,9 @@ def main_pipeline(
                     noise_regularization_lambda_ac = noise_regularization_lambda_ac,
                     noise_regularization_lambda_kl = noise_regularization_lambda_kl,
                     perform_noise_correction = perform_noise_correction,
-                    seed = seed)
+                    seed = seed,
+                    fixed_point_iterations = fixed_point_iterations,
+                    fixed_point_inversion_steps = fixed_point_inversion_steps)
         
         inv_latent = None
         noise_list = None
@@ -94,7 +97,9 @@ def main_pipeline(
                                     edit_prompt=tgt_prompt,
                                     noise=noise_list,
                                     edit_cfg=edit_cfg,
-                                    do_reconstruction=True)
+                                    do_reconstruction=True,
+                                    fixed_point_iterations=fixed_point_iterations,
+                                    fixed_point_inversion_steps = fixed_point_inversion_steps)
 
         prev_configs.append(config)
         prev_inv_latents.append(inv_latent)
@@ -222,7 +227,20 @@ with gr.Blocks(css='app/style.css') as demo:
                     info="IMPROVES RECONSTRUCTION. Performs noise correction to improve the reconstruction of the image.",
                     value=True
                 )
-
+                fixed_point_iterations = gr.Slider(
+                    label='Number of fixed point iterations',
+                    minimum=0,
+                    maximum=10,
+                    value=2,
+                    step=1
+                )
+                fixed_point_inversion_steps = gr.Slider(
+                    label='Number of inversion steps per fixed point iteration',
+                    minimum=1,
+                    maximum=4,
+                    value=2,
+                    step=1
+                )
             run_button = gr.Button('Edit')
         with gr.Column():
             # result = gr.Gallery(label='Result')
@@ -249,7 +267,9 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    False #noise_correction
+                    False, #noise_correction
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
                 ],
                 [
                     "example_images/kitten.jpg", #input_image
@@ -266,7 +286,9 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    False #noise_correction
+                    False, #noise_correction
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
                 ],
                 [
                     "example_images/kitten.jpg", #input_image
@@ -283,7 +305,9 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    False #noise_correction
+                    False, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
                 ],
                 [
                     "example_images/monkey.jpeg", #input_image
@@ -300,7 +324,9 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    True #noise_correction
+                    True, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
                 ],
                 [
                     "example_images/monkey.jpeg", #input_image
@@ -317,7 +343,9 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    True #noise_correction
+                    True, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
                 ],
                 [
                     "example_images/lion.jpeg", #input_image
@@ -334,7 +362,9 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    True #noise_correction
+                    True, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
                 ]
             ]
 
@@ -354,7 +384,9 @@ with gr.Blocks(css='app/style.css') as demo:
                             rest_step_range_end,
                             noise_regularization_lambda_ac,
                             noise_regularization_lambda_kl,
-                            noise_correction
+                            noise_correction,
+                            fixed_point_iterations,
+                            fixed_point_inversion_steps
                         ],
                         outputs=[
                             result
@@ -378,7 +410,9 @@ with gr.Blocks(css='app/style.css') as demo:
         rest_step_range_end,
         noise_regularization_lambda_ac,
         noise_regularization_lambda_kl,
-        noise_correction
+        noise_correction,
+        fixed_point_iterations,
+        fixed_point_inversion_steps
     ]
     outputs = [
         result

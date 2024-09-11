@@ -44,5 +44,11 @@ class RunConfig:
 
     perform_noise_correction: bool = True
 
+    # Fixed Point Iterations
+    
+    fixed_point_iterations: int = 2
+    
+    fixed_point_inversion_steps: int = 2
+    
     def __post_init__(self):
         pass

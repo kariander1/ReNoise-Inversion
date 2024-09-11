@@ -25,7 +25,9 @@ def run(init_image: Image,
         edit_prompt = None,
         edit_cfg = 1.0,
         noise = None,
-        do_reconstruction = True):
+        do_reconstruction = True,
+        fixed_point_iterations = 2,
+        fixed_point_inversion_steps = 2):
     
     generator = torch.Generator().manual_seed(cfg.seed)
 
@@ -47,9 +49,12 @@ def run(init_image: Image,
                         generator = generator,
                         image = init_image,
                         guidance_scale = cfg.guidance_scale,
-                        strength = cfg.inversion_max_step,
-                        denoising_start = 1.0-cfg.inversion_max_step,
-                        num_renoise_steps = cfg.num_renoise_steps)
+                        strength = cfg.inversion_max_step, # irrelevant if using cfg.inversion_max_step
+                        denoising_start = 1.0-cfg.inversion_max_step, # in inversion context this is the denoising end
+                        num_renoise_steps = cfg.num_renoise_steps,
+                        fixed_point_iterations = fixed_point_iterations,
+                        fixed_point_inversion_steps = fixed_point_inversion_steps,
+                        pipe_inference = pipe_inference)
         latents = res[0][0]
         all_latents = res[1]
     
