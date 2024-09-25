@@ -2,3 +2,11 @@ gradio_cached_examples/
 src/gradio/__pycache__/
 *.pyc
 .vscode
+*.csv
+*.err
+*.out
+*.zip
+*.sbatch
+*.png
+*.jpg
+*.jpeg

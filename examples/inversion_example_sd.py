@@ -1,7 +1,7 @@
 import torch
 from PIL import Image
 
-from src.eunms import Model_Type, Scheduler_Type
+from src.enums import Model_Type, Scheduler_Type
 from src.utils.enums_utils import get_pipes
 from src.config import RunConfig
 

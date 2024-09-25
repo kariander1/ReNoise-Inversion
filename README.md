@@ -38,7 +38,7 @@ There are three examples of how to use the inversion in Stable Diffusion, SDXL, 
 We have created a diffusers pipe to perform the inversion. You can use the following code to use ReNoise in your project:
 
 ```
-from src.eunms import Model_Type, Scheduler_Type
+from src.enums import Model_Type, Scheduler_Type
 from src.utils.enums_utils import get_pipes
 from src.config import RunConfig
 
@@ -85,7 +85,7 @@ pipe_inference.scheduler.set_noise_list(noise)
 ### Edit
 To edit images using ReNoise you can use the following code:
 ```
-from src.eunms import Model_Type, Scheduler_Type
+from src.enums import Model_Type, Scheduler_Type
 from src.utils.enums_utils import get_pipes
 from src.config import RunConfig
 

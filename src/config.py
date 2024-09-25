@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from src.eunms import Model_Type, Scheduler_Type
+from src.enums import Model_Type, Scheduler_Type
 
 @dataclass
 class RunConfig:
@@ -46,9 +46,11 @@ class RunConfig:
 
     # Fixed Point Iterations
     
-    fixed_point_iterations: int = 2
+    fixed_point_iterations: int = 0
     
-    fixed_point_inversion_steps: int = 2
+    fixed_point_inversion_steps: int = 0
+    
+    fixed_point_inversion_strength: int = 4
     
     def __post_init__(self):
         pass
