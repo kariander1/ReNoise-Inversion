@@ -36,6 +36,9 @@ class SDDDIMPipeline(StableDiffusionImg2ImgPipeline):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         num_renoise_steps: int = 100,
+        fixed_point_iterations: int = 2,
+        fixed_point_inversion_steps: int = 2,
+        pipe_inference: Optional[Callable[..., Any]] = None,
         **kwargs,
     ):
         callback = kwargs.pop("callback", None)
@@ -139,7 +142,66 @@ class SDDDIMPipeline(StableDiffusionImg2ImgPipeline):
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
 
-        # 8. Denoising loop
+        # 8. Fixed point iterations
+        all_fixed_point_latents = []
+        timesteps_fixed_point = timesteps[-fixed_point_inversion_steps:]
+        # timesteps_fixed_point = (timesteps_fixed_point+1)/250
+        # pipe_fixed_point = self.copy()
+        with self.progress_bar(total=fixed_point_iterations) as progress_bar:
+            for f_i in range(fixed_point_iterations):
+                num_warmup_steps = max(len(timesteps) - num_inversion_steps * self.scheduler.order, 0)
+                self._num_timesteps = fixed_point_inversion_steps
+                self.z_0 = torch.clone(latents)
+                self.noise = randn_tensor(self.z_0.shape, generator=generator, device=self.z_0.device, dtype=self.z_0.dtype)
+                all_fixed_point_latents.append([latents.clone()])
+                for i, t in enumerate(reversed(timesteps_fixed_point)):
+
+                    added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
+                    if ip_adapter_image is not None:
+                        added_cond_kwargs["image_embeds"] = image_embeds
+
+                    latents = inversion_step(self,
+                                        latents,
+                                        t,
+                                        prompt_embeds,
+                                        added_cond_kwargs,
+                                        num_renoise_steps=num_renoise_steps,
+                                        generator=generator)
+                    all_fixed_point_latents[-1].append(latents.clone())
+                    if callback_on_step_end is not None:
+                        callback_kwargs = {}
+                        for k in callback_on_step_end_tensor_inputs:
+                            callback_kwargs[k] = locals()[k]
+                        callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+
+                        latents = callback_outputs.pop("latents", latents)
+                        prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                        negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                        add_text_embeds = callback_outputs.pop("add_text_embeds", add_text_embeds)
+                        negative_pooled_prompt_embeds = callback_outputs.pop(
+                            "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
+                        )
+                        add_time_ids = callback_outputs.pop("add_time_ids", add_time_ids)
+                        add_neg_time_ids = callback_outputs.pop("add_neg_time_ids", add_neg_time_ids)
+
+                    # call the callback, if provided
+                    if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                        
+                        if callback is not None and i % callback_steps == 0:
+                            step_idx = i // getattr(self.scheduler, "order", 1)
+                            callback(step_idx, t, latents)
+
+                # Denoise back to z_0
+                latents = pipe_inference(prompt = prompt,
+                                num_inference_steps = len(timesteps),
+                                image = latents,
+                                denoising_start = fixed_point_inversion_steps/len(timesteps),
+                                guidance_scale = guidance_scale,
+                                output_type = 'latent').images
+                
+                progress_bar.update()
+                
+        # 9. Denoising loop
         num_warmup_steps = len(timesteps) - num_inversion_steps * self.scheduler.order
 
         self._num_timesteps = len(timesteps)
@@ -182,4 +244,4 @@ class SDDDIMPipeline(StableDiffusionImg2ImgPipeline):
         # Offload all models
         self.maybe_free_model_hooks()
 
-        return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=None), all_latents
+        return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=None), all_latents, all_fixed_point_latents

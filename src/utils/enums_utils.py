@@ -2,7 +2,7 @@
 import torch
 from diffusers import StableDiffusionImg2ImgPipeline, StableDiffusionXLImg2ImgPipeline
 
-from src.eunms import Model_Type, Scheduler_Type
+from src.enums import Model_Type, Scheduler_Type
 from src.schedulers.euler_scheduler import MyEulerAncestralDiscreteScheduler
 from src.schedulers.lcm_scheduler import MyLCMScheduler
 from src.schedulers.ddim_scheduler import MyDDIMScheduler

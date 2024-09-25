@@ -1,13 +1,27 @@
 import torch
+import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
-
+from transformers import CLIPProcessor, CLIPModel
 from src.metrics.lpips import LPIPS
-import torch.nn as nn
+from torchmetrics.functional.multimodal import clip_score
+from functools import partial
 
 dev = 'cuda'
 to_tensor_transform = transforms.Compose([transforms.ToTensor()])
 mse_loss = nn.MSELoss()
+clip_score_fn = partial(clip_score, model_name_or_path="openai/clip-vit-base-patch16")
+
+
+def calculate_clip_score(images, prompts):
+    # If the images are in range [0, 1], scale them to [0, 255] and convert to uint8
+    images_uint8 = (images * 255).to(torch.uint8)
+    
+    # Ensure images are in the correct shape Bx3x512x512, which they already are
+    clip_score = clip_score_fn(images_uint8, prompts).detach()
+    
+    # Return the rounded clip score
+    return round(float(clip_score), 4)
 
 def calculate_l2_difference(image1, image2, device = 'cuda'):
     if isinstance(image1, Image.Image):
@@ -41,7 +55,7 @@ def calculate_lpips(image1, image2, device = 'cuda'):
     loss = loss_fn(image1, image2).item()
     return loss
 
-def calculate_metrics(image1, image2, device = 'cuda', size=(512, 512)):
+def calculate_metrics(image1, image2, device = 'cuda', size=(512, 512)) -> dict:
     if isinstance(image1, Image.Image):
         image1 = image1.resize(size)
         image1 = to_tensor_transform(image1).to(device)

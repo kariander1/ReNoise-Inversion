@@ -54,6 +54,7 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
         num_renoise_steps: int = 100,
         fixed_point_iterations: int = 2,
         fixed_point_inversion_steps: int = 2,
+        fixed_point_inversion_strength: int = 50,
         pipe_inference: Optional[Callable[..., Any]] = None,
         **kwargs,
     ):
@@ -210,14 +211,24 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
                 image_embeds = image_embeds.to(device)
 
         # 9. Fixed point iterations
-        timesteps_fixed_point = timesteps[-fixed_point_inversion_steps:]
+        all_fixed_point_latents = []
         with self.progress_bar(total=fixed_point_iterations) as progress_bar:
             for f_i in range(fixed_point_iterations):
+                
+                timesteps_fixed_point, _ = retrieve_timesteps(self.scheduler, fixed_point_inversion_strength, device, None)
+                timesteps_fixed_point, fixed_point_inversion_steps = self.get_timesteps(
+                    fixed_point_inversion_steps,
+                    strength,
+                    device,
+                    denoising_start=(1-fixed_point_inversion_steps/fixed_point_inversion_strength),
+                )
+        
+        
                 num_warmup_steps = max(len(timesteps) - num_inversion_steps * self.scheduler.order, 0)
                 self._num_timesteps = fixed_point_inversion_steps
                 self.z_0 = torch.clone(latents)
                 self.noise = randn_tensor(self.z_0.shape, generator=generator, device=self.z_0.device, dtype=self.z_0.dtype)
-            
+                all_fixed_point_latents.append([latents.clone()])
                 for i, t in enumerate(reversed(timesteps_fixed_point)):
 
                     added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
@@ -231,7 +242,7 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
                                         added_cond_kwargs,
                                         num_renoise_steps=num_renoise_steps,
                                         generator=generator)
-
+                    all_fixed_point_latents[-1].append(latents.clone())
                     if callback_on_step_end is not None:
                         callback_kwargs = {}
                         for k in callback_on_step_end_tensor_inputs:
@@ -257,14 +268,22 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
 
                 # Denoise back to z_0
                 latents = pipe_inference(prompt = prompt,
-                                num_inference_steps = len(timesteps),
+                                num_inference_steps = fixed_point_inversion_strength,
                                 image = latents,
-                                denoising_start = fixed_point_inversion_steps/len(timesteps),
+                                denoising_start = (1-fixed_point_inversion_steps/fixed_point_inversion_strength),
                                 guidance_scale = guidance_scale,
                                 output_type = 'latent').images
                 
                 progress_bar.update()
-
+        
+        # Revert timestamp to original inversion values
+        timesteps, num_inversion_steps = retrieve_timesteps(self.scheduler, num_inversion_steps, device, None)
+        timesteps, num_inversion_steps = self.get_timesteps(
+            num_inversion_steps,
+            strength,
+            device,
+            denoising_start=self.denoising_start if denoising_value_valid else None,
+        )
 
         # 10. Inversion loop
         num_warmup_steps = max(len(timesteps) - num_inversion_steps * self.scheduler.order, 0)
@@ -319,4 +338,4 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
         # Offload all models
         self.maybe_free_model_hooks()
 
-        return StableDiffusionXLPipelineOutput(images=image), all_latents
+        return StableDiffusionXLPipelineOutput(images=image), all_latents, all_fixed_point_latents
