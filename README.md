@@ -7,10 +7,6 @@
 <a href="https://arxiv.org/abs/2403.14602"><img src="https://img.shields.io/badge/arXiv-ReNoise-b31b1b.svg" height=20.5></a>
 ![Picture5](https://github.com/user-attachments/assets/6b5d3ab6-3ae4-4ec3-8af8-bc7c16feea5f)
 
-<p align="center">
-<img src="docs/teaser.jpg" width="800px"/>
-</p>
-
 ## Description
 Implementation of Deep Learning project: Renoise Prompt Awareness & Convergence.
 
