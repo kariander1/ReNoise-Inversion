@@ -5,7 +5,7 @@
 
 <a href="https://garibida.github.io/ReNoise-Inversion/"><img src="https://img.shields.io/static/v1?label=Project&message=Website&color=red" height=20.5></a> 
 <a href="https://arxiv.org/abs/2403.14602"><img src="https://img.shields.io/badge/arXiv-ReNoise-b31b1b.svg" height=20.5></a>
-[![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/garibida/ReNoise-Inversion)
+![Picture5](https://github.com/user-attachments/assets/6b5d3ab6-3ae4-4ec3-8af8-bc7c16feea5f)
 
 <p align="center">
 <img src="docs/teaser.jpg" width="800px"/>
