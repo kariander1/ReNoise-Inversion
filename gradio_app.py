@@ -1,21 +1,21 @@
 from __future__ import annotations
-
 import gradio as gr
 import spaces
 from PIL import Image
 import torch
 
-from src.eunms import Model_Type, Scheduler_Type
+from src.enums import Model_Type, Scheduler_Type
 from src.utils.enums_utils import model_type_to_size, get_pipes
 from src.config import RunConfig
 from main import run as run_model
 
 
-DESCRIPTION = '''# ReNoise: Real Image Inversion Through Iterative Noising
-This is a demo for our ''ReNoise: Real Image Inversion Through Iterative Noising'' [paper](https://garibida.github.io/ReNoise-Inversion/). Code is available [here](https://github.com/garibida/ReNoise-Inversion)
-Our ReNoise inversion technique can be applied to various diffusion models, including recent few-step ones such as SDXL-Turbo.
-This demo preform real image editing using our ReNoise inversion. The input image is resize to size of 512x512, the optimal size of SDXL Turbo.
+DESCRIPTION = '''# ReNoise - Prompt Awareness & Convergence
+This is a demo for our extension of the "ReNoise: Real Image Inversion Through Iterative Noising" [paper](https://garibida.github.io/ReNoise-Inversion/). Code is available [here](https://github.com/garibida/ReNoise-Inversion).
+In this work, we expand on ReNoise by exploring convergence criteria for the iterative noising process and introducing prompt-aware adjustments to enhance the quality of edits. The ReNoise inversion technique is compatible with various diffusion models, including recent few-step models like SDXL-Turbo.
+The demo performs real image editing using Prompt-Aware ReNoise inversion, where the input image is resized to 512x512, the optimal size for SDXL Turbo.
 '''
+
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model_type = Model_Type.SDXL_Turbo
@@ -23,7 +23,7 @@ scheduler_type = Scheduler_Type.EULER
 image_size = model_type_to_size(Model_Type.SDXL_Turbo)
 pipe_inversion, pipe_inference = get_pipes(model_type, scheduler_type, device=device)
 
-cache_size = 25
+cache_size = 30
 prev_configs = [None for i in range(cache_size)]
 prev_inv_latents = [None for i in range(cache_size)]
 prev_images = [None for i in range(cache_size)]
@@ -45,7 +45,9 @@ def main_pipeline(
         rest_step_range_end: int,
         noise_regularization_lambda_ac: float,
         noise_regularization_lambda_kl: float,
-        perform_noise_correction: bool):
+        perform_noise_correction: bool,
+        fixed_point_iterations: int,
+        fixed_point_inversion_steps: int ):
 
         global prev_configs, prev_inv_latents, prev_images, prev_noises
 
@@ -68,7 +70,9 @@ def main_pipeline(
                     noise_regularization_lambda_ac = noise_regularization_lambda_ac,
                     noise_regularization_lambda_kl = noise_regularization_lambda_kl,
                     perform_noise_correction = perform_noise_correction,
-                    seed = seed)
+                    seed = seed,
+                    fixed_point_iterations = fixed_point_iterations,
+                    fixed_point_inversion_steps = fixed_point_inversion_steps)
         
         inv_latent = None
         noise_list = None
@@ -85,7 +89,7 @@ def main_pipeline(
 
         original_image = Image.open(input_image).convert("RGB").resize(image_size)
 
-        res_image, inv_latent, noise, all_latents = run_model(original_image,
+        res_image, inv_latent, noise, all_latents, all_fixed_point_latents = run_model(original_image,
                                     src_prompt,
                                     config,
                                     latents=inv_latent,
@@ -145,7 +149,7 @@ with gr.Blocks(css='app/style.css') as demo:
                     step=0.1
                 )
                 seed = gr.Slider(
-                    label='Denoise Classifier-Free Guidence Scale',
+                    label='Seed',
                     minimum=0,
                     maximum=16*1024,
                     value=7865,
@@ -222,7 +226,21 @@ with gr.Blocks(css='app/style.css') as demo:
                     info="IMPROVES RECONSTRUCTION. Performs noise correction to improve the reconstruction of the image.",
                     value=True
                 )
-
+                fixed_point_iterations = gr.Slider(
+                    label='Number of prompt-aware iterations',
+                    info="IMPROVES EDITABILITY. This controls number of prompt-aware iterations to perform. The more iterations, the more the inversion will be aligned with the source prompt.",
+                    minimum=0,
+                    maximum=10,
+                    value=2,
+                    step=1
+                )
+                fixed_point_inversion_steps = gr.Slider(
+                    label='Number of inversion steps per fixed point iteration',
+                    minimum=1,
+                    maximum=4,
+                    value=2,
+                    step=1
+                )
             run_button = gr.Button('Edit')
         with gr.Column():
             # result = gr.Gallery(label='Result')
@@ -235,9 +253,9 @@ with gr.Blocks(css='app/style.css') as demo:
 
             examples = [
                 [
-                    "example_images/kitten.jpg", #input_image
-                    "A kitten is sitting in a basket on a branch", #src_prompt
-                    "a lego kitten is sitting in a basket on a branch", #tgt_prompt
+                    "example_images/space_dog.png", #input_image
+                    "a dog wearing space suit", #src_prompt
+                    "a cat wearing space suit", #tgt_prompt
                     1.0, #edit_cfg
                     7865, #seed
                     9, #number_of_renoising_iterations
@@ -249,12 +267,14 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    False #noise_correction
+                    True, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
                 ],
                 [
-                    "example_images/kitten.jpg", #input_image
-                    "A kitten is sitting in a basket on a branch", #src_prompt
-                    "a brokkoli is sitting in a basket on a branch", #tgt_prompt
+                    "example_images/space_dog.png", #input_image
+                    "a dog wearing space suit", #src_prompt
+                    "a cat wearing space suit", #tgt_prompt
                     1.0, #edit_cfg
                     7865, #seed
                     9, #number_of_renoising_iterations
@@ -266,12 +286,33 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    False #noise_correction
+                    True, #noise_correction,
+                    2, #fixed_point_iterations
+                    2, #fixed_point_inversion_steps
+                ],
+                                [
+                    "example_images/space_dog.png", #input_image
+                    "a dog wearing space suit", #src_prompt
+                    "a dog wearing space suit, mouth open", #tgt_prompt
+                    1.0, #edit_cfg
+                    7865, #seed
+                    9, #number_of_renoising_iterations
+                    1.0, #inersion_strength
+                    True, #avg_gradients
+                    0, #first_step_range_start
+                    5, #first_step_range_end
+                    8, #rest_step_range_start
+                    10, #rest_step_range_end
+                    20.0, #noise_regularization_lambda_ac
+                    0.055, #noise_regularization_lambda_kl
+                    True, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
                 ],
                 [
-                    "example_images/kitten.jpg", #input_image
-                    "A kitten is sitting in a basket on a branch", #src_prompt
-                    "a dog is sitting in a basket on a branch", #tgt_prompt
+                    "example_images/space_dog.png", #input_image
+                    "a dog wearing space suit", #src_prompt
+                    "a dog wearing space suit, mouth open", #tgt_prompt
                     1.0, #edit_cfg
                     7865, #seed
                     9, #number_of_renoising_iterations
@@ -283,12 +324,14 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    False #noise_correction
+                    True, #noise_correction,
+                    2, #fixed_point_iterations
+                    2, #fixed_point_inversion_steps
                 ],
                 [
                     "example_images/monkey.jpeg", #input_image
                     "a monkey sitting on a tree branch in the forest", #src_prompt
-                    "a beaver sitting on a tree branch in the forest", #tgt_prompt
+                    "a chicken sitting on a tree branch in the forest", #tgt_prompt
                     1.0, #edit_cfg
                     7865, #seed
                     9, #number_of_renoising_iterations
@@ -300,12 +343,14 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    True #noise_correction
+                    True, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
                 ],
                 [
                     "example_images/monkey.jpeg", #input_image
                     "a monkey sitting on a tree branch in the forest", #src_prompt
-                    "a raccoon sitting on a tree branch in the forest", #tgt_prompt
+                    "a chicken sitting on a tree branch in the forest", #tgt_prompt
                     1.0, #edit_cfg
                     7865, #seed
                     9, #number_of_renoising_iterations
@@ -317,12 +362,14 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    True #noise_correction
+                    True, #noise_correction,
+                    2, #fixed_point_iterations
+                    2, #fixed_point_inversion_steps
                 ],
                 [
-                    "example_images/lion.jpeg", #input_image
-                    "a lion is sitting in the grass at sunset", #src_prompt
-                    "a tiger is sitting in the grass at sunset", #tgt_prompt
+                    "example_images/monkey.jpeg", #input_image
+                    "a monkey sitting on a tree branch in the forest", #src_prompt
+                    "a monkey sitting on a metal pole in the forest", #tgt_prompt
                     1.0, #edit_cfg
                     7865, #seed
                     9, #number_of_renoising_iterations
@@ -334,8 +381,105 @@ with gr.Blocks(css='app/style.css') as demo:
                     10, #rest_step_range_end
                     20.0, #noise_regularization_lambda_ac
                     0.055, #noise_regularization_lambda_kl
-                    True #noise_correction
-                ]
+                    True, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
+                ],
+                [
+                    "example_images/monkey.jpeg", #input_image
+                    "a monkey sitting on a tree branch in the forest", #src_prompt
+                    "a monkey sitting on a metal pole in the forest", #tgt_prompt
+                    1.0, #edit_cfg
+                    7865, #seed
+                    9, #number_of_renoising_iterations
+                    1.0, #inersion_strength
+                    True, #avg_gradients
+                    0, #first_step_range_start
+                    5, #first_step_range_end
+                    8, #rest_step_range_start
+                    10, #rest_step_range_end
+                    20.0, #noise_regularization_lambda_ac
+                    0.055, #noise_regularization_lambda_kl
+                    True, #noise_correction,
+                    2, #fixed_point_iterations
+                    2, #fixed_point_inversion_steps
+                ],
+                [
+                    "example_images/bicycle.jpg", #input_image
+                    "a slanted mountain bicycle on the road in front of a building", #src_prompt
+                    "a slanted mountain bicycle on the grass in front of a building", #tgt_prompt
+                    1.0, #edit_cfg
+                    7865, #seed
+                    9, #number_of_renoising_iterations
+                    1.0, #inersion_strength
+                    True, #avg_gradients
+                    0, #first_step_range_start
+                    5, #first_step_range_end
+                    8, #rest_step_range_start
+                    10, #rest_step_range_end
+                    20.0, #noise_regularization_lambda_ac
+                    0.055, #noise_regularization_lambda_kl
+                    True, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
+                ],
+                [
+                    "example_images/bicycle.jpg", #input_image
+                    "a slanted mountain bicycle on the road in front of a building", #src_prompt
+                    "a slanted mountain bicycle on the grass in front of a building", #tgt_prompt
+                    1.0, #edit_cfg
+                    7865, #seed
+                    9, #number_of_renoising_iterations
+                    1.0, #inersion_strength
+                    True, #avg_gradients
+                    0, #first_step_range_start
+                    5, #first_step_range_end
+                    8, #rest_step_range_start
+                    10, #rest_step_range_end
+                    20.0, #noise_regularization_lambda_ac
+                    0.055, #noise_regularization_lambda_kl
+                    True, #noise_correction,
+                    3, #fixed_point_iterations
+                    2, #fixed_point_inversion_steps
+                ],
+                                [
+                    "example_images/bicycle.jpg", #input_image
+                    "a slanted mountain bicycle on the road in front of a building", #src_prompt
+                    "a slanted vespa on the grass in front of a building", #tgt_prompt
+                    1.0, #edit_cfg
+                    7865, #seed
+                    9, #number_of_renoising_iterations
+                    1.0, #inersion_strength
+                    True, #avg_gradients
+                    0, #first_step_range_start
+                    5, #first_step_range_end
+                    8, #rest_step_range_start
+                    10, #rest_step_range_end
+                    20.0, #noise_regularization_lambda_ac
+                    0.055, #noise_regularization_lambda_kl
+                    True, #noise_correction,
+                    0, #fixed_point_iterations
+                    1, #fixed_point_inversion_steps
+                ],
+                [
+                    "example_images/bicycle.jpg", #input_image
+                    "a slanted mountain bicycle on the road in front of a building", #src_prompt
+                    "a slanted vespa on the grass in front of a building", #tgt_prompt
+                    1.0, #edit_cfg
+                    7865, #seed
+                    9, #number_of_renoising_iterations
+                    1.0, #inersion_strength
+                    True, #avg_gradients
+                    0, #first_step_range_start
+                    5, #first_step_range_end
+                    8, #rest_step_range_start
+                    10, #rest_step_range_end
+                    20.0, #noise_regularization_lambda_ac
+                    0.055, #noise_regularization_lambda_kl
+                    True, #noise_correction,
+                    1, #fixed_point_iterations
+                    2, #fixed_point_inversion_steps
+                ],
             ]
 
             gr.Examples(examples=examples,
@@ -354,7 +498,9 @@ with gr.Blocks(css='app/style.css') as demo:
                             rest_step_range_end,
                             noise_regularization_lambda_ac,
                             noise_regularization_lambda_kl,
-                            noise_correction
+                            noise_correction,
+                            fixed_point_iterations,
+                            fixed_point_inversion_steps
                         ],
                         outputs=[
                             result
@@ -378,7 +524,9 @@ with gr.Blocks(css='app/style.css') as demo:
         rest_step_range_end,
         noise_regularization_lambda_ac,
         noise_regularization_lambda_kl,
-        noise_correction
+        noise_correction,
+        fixed_point_iterations,
+        fixed_point_inversion_steps
     ]
     outputs = [
         result
