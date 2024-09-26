@@ -76,6 +76,7 @@ You can controll the inversion paremeters using the following attributes in the 
 - `noise_regularization_lambda_ac` - Noise regularization pairwise lambda.
 - `noise_regularization_lambda_kl` - Noise regularization patch KL divergence lambda.
 - `perform_noise_correction` - Perform noise correction.
+- `fixed_point_iterations` - Number of prompt-aware iterations to perform. Default 2.
 
 In case of stochastic sampler add the following to use the same \epsilon_t as in the inversion process.
 ```
@@ -118,10 +119,11 @@ This code builds on the code from the [diffusers](https://github.com/huggingface
 borrow code from the following repositories: 
 - [Pix2PixZero](https://github.com/pix2pixzero/pix2pix-zero) for noise regularization.
 - [sdxl_inversions](https://github.com/cloneofsimo/sdxl_inversions) for initial implementation of DDIM inversion in SDXL.
+- [ReNoise](https://github.com/garibida/ReNoise-Inversion) for the base reporsitory.
 
 
 ## Citation
-If you use this code for your research, please cite the following work: 
+If you use this code for your research, please cite the original work by ReNoise: 
 ```
 @misc{garibi2024renoise,
       title={ReNoise: Real Image Inversion Through Iterative Noising}, 
