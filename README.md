@@ -12,7 +12,7 @@
 </p>
 
 ## Description
-Official implementation of our ReNoise paper.
+Implementation of Deep Learning project: Renoise Prompt Awareness & Convergence.
 
 ## Environment Setup
 Our code builds on the requirement of the `diffusers` library. To set up the environment, please run:
