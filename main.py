@@ -26,7 +26,9 @@ def run(init_image: Image,
         edit_cfg = 1.0,
         noise = None,
         do_reconstruction = True,
-        return_image_latent = False):
+        return_image_latent = False,
+        inversion_step_type = "classic",       
+        epsilon = 0.0):
     
     generator = torch.Generator().manual_seed(cfg.seed)
 
@@ -56,11 +58,14 @@ def run(init_image: Image,
                         fixed_point_iterations = cfg.fixed_point_iterations,
                         fixed_point_inversion_steps = cfg.fixed_point_inversion_steps,
                         fixed_point_inversion_strength = cfg.fixed_point_inversion_strength,
-                        pipe_inference = pipe_inference)
+                        pipe_inference = pipe_inference,
+                        inversion_step_type = inversion_step_type,
+                        epsilon=epsilon)
         latents = res[0][0]
         all_latents = res[1]
         all_fixed_point_latents = res[2]
-        
+        mean_inversions = res[3]
+    
     inv_latent = latents.clone()
 
     if do_reconstruction:
@@ -78,7 +83,7 @@ def run(init_image: Image,
     else:
         img = None
                     
-    return img, inv_latent, noise, all_latents, all_fixed_point_latents
+    return img, inv_latent, noise, all_latents, all_fixed_point_latents, mean_inversions
 
 if __name__ == "__main__":
     main()

@@ -9,7 +9,7 @@ from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import (
     PipelineImageInput
 )
 
-from src.renoise_inversion import inversion_step
+from src.renoise_inversion import inversion_step, inversion_step_error_diff_stop, inversion_step_error_stop
 
 
 class SDDDIMPipeline(StableDiffusionImg2ImgPipeline):
@@ -39,6 +39,8 @@ class SDDDIMPipeline(StableDiffusionImg2ImgPipeline):
         fixed_point_iterations: int = 2,
         fixed_point_inversion_steps: int = 2,
         pipe_inference: Optional[Callable[..., Any]] = None,
+        inversion_step_type: str = "classic",
+        epsilon: float = 0.0,  # Add epsilon for convergence
         **kwargs,
     ):
         callback = kwargs.pop("callback", None)
@@ -160,13 +162,39 @@ class SDDDIMPipeline(StableDiffusionImg2ImgPipeline):
                     if ip_adapter_image is not None:
                         added_cond_kwargs["image_embeds"] = image_embeds
 
-                    latents = inversion_step(self,
-                                        latents,
-                                        t,
-                                        prompt_embeds,
-                                        added_cond_kwargs,
-                                        num_renoise_steps=num_renoise_steps,
-                                        generator=generator)
+                    if inversion_step_type == 'classic':
+                        latents, num_inversions = inversion_step(
+                            self,
+                            latents,
+                            t,
+                            prompt_embeds,
+                            added_cond_kwargs,
+                            num_renoise_steps=num_renoise_steps,
+                            generator=generator
+                        )
+                    elif inversion_step_type == 'error':
+                        latents, num_inversions = inversion_step_error_stop(
+                            self,
+                            latents,
+                            t,
+                            prompt_embeds,
+                            added_cond_kwargs,
+                            num_renoise_steps=num_renoise_steps,
+                            generator=generator
+                        )
+                    elif inversion_step_type == 'error_diff':
+                        latents, num_inversions = inversion_step_error_diff_stop(
+                            self,
+                            latents,
+                            t,
+                            prompt_embeds,
+                            added_cond_kwargs,
+                            num_renoise_steps=num_renoise_steps,
+                            generator=generator
+                        )
+                    else:
+                        raise ValueError(f"Unknown inversion_step_type: {inversion_step_type}")
+
                     all_fixed_point_latents[-1].append(latents.clone())
                     if callback_on_step_end is not None:
                         callback_kwargs = {}
@@ -212,13 +240,38 @@ class SDDDIMPipeline(StableDiffusionImg2ImgPipeline):
         with self.progress_bar(total=num_inversion_steps) as progress_bar:
             for i, t in enumerate(reversed(timesteps)):
 
-                latents = inversion_step(self,
-                                       latents,
-                                       t,
-                                       prompt_embeds,
-                                       added_cond_kwargs,
-                                       num_renoise_steps=num_renoise_steps,
-                                       generator=generator)
+                if inversion_step_type == 'classic':
+                        latents, num_inversions = inversion_step(
+                            self,
+                            latents,
+                            t,
+                            prompt_embeds,
+                            added_cond_kwargs,
+                            num_renoise_steps=num_renoise_steps,
+                            generator=generator
+                        )
+                elif inversion_step_type == 'error':
+                    latents, num_inversions = inversion_step_error_stop(
+                        self,
+                        latents,
+                        t,
+                        prompt_embeds,
+                        added_cond_kwargs,
+                        num_renoise_steps=num_renoise_steps,
+                        generator=generator
+                    )
+                elif inversion_step_type == 'error_diff':
+                    latents, num_inversions = inversion_step_error_diff_stop(
+                        self,
+                        latents,
+                        t,
+                        prompt_embeds,
+                        added_cond_kwargs,
+                        num_renoise_steps=num_renoise_steps,
+                        generator=generator
+                    )
+                else:
+                    raise ValueError(f"Unknown inversion_step_type: {inversion_step_type}")
                     
                 all_latents.append(latents.clone())
 

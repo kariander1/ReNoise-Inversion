@@ -9,7 +9,7 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import
     PipelineImageInput
 )
 
-from src.renoise_inversion import inversion_step
+from src.renoise_inversion import inversion_step, inversion_step_error_diff_stop, inversion_step_error_stop
 
 
 class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
@@ -56,6 +56,8 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
         fixed_point_inversion_steps: int = 2,
         fixed_point_inversion_strength: int = 50,
         pipe_inference: Optional[Callable[..., Any]] = None,
+        inversion_step_type: str = "classic",
+        epsilon: float = 0.0,  # Add epsilon for convergence
         **kwargs,
     ):
         callback = kwargs.pop("callback", None)
@@ -235,13 +237,38 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
                     if ip_adapter_image is not None:
                         added_cond_kwargs["image_embeds"] = image_embeds
 
-                    latents = inversion_step(self,
-                                        latents,
-                                        t,
-                                        prompt_embeds,
-                                        added_cond_kwargs,
-                                        num_renoise_steps=num_renoise_steps,
-                                        generator=generator)
+                    if inversion_step_type == 'classic':
+                        latents, num_inversions = inversion_step(
+                            self,
+                            latents,
+                            t,
+                            prompt_embeds,
+                            added_cond_kwargs,
+                            num_renoise_steps=num_renoise_steps,
+                            generator=generator
+                        )
+                    elif inversion_step_type == 'error':
+                        latents, num_inversions = inversion_step_error_stop(
+                            self,
+                            latents,
+                            t,
+                            prompt_embeds,
+                            added_cond_kwargs,
+                            num_renoise_steps=num_renoise_steps,
+                            generator=generator
+                        )
+                    elif inversion_step_type == 'error_diff':
+                        latents, num_inversions = inversion_step_error_diff_stop(
+                            self,
+                            latents,
+                            t,
+                            prompt_embeds,
+                            added_cond_kwargs,
+                            num_renoise_steps=num_renoise_steps,
+                            generator=generator
+                        )
+                    else:
+                        raise ValueError(f"Unknown inversion_step_type: {inversion_step_type}")
                     all_fixed_point_latents[-1].append(latents.clone())
                     if callback_on_step_end is not None:
                         callback_kwargs = {}
@@ -293,6 +320,7 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
         self.noise = randn_tensor(self.z_0.shape, generator=generator, device=self.z_0.device, dtype=self.z_0.dtype)
 
         all_latents = [latents.clone()]
+        all_num_inversions = []
         with self.progress_bar(total=num_inversion_steps) as progress_bar:
             for i, t in enumerate(reversed(timesteps)):
 
@@ -300,16 +328,41 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
                 if ip_adapter_image is not None:
                     added_cond_kwargs["image_embeds"] = image_embeds
 
-                latents = inversion_step(self,
-                                       latents,
-                                       t,
-                                       prompt_embeds,
-                                       added_cond_kwargs,
-                                       num_renoise_steps=num_renoise_steps,
-                                       generator=generator)
-                    
-                all_latents.append(latents.clone())
+                if inversion_step_type == 'classic':
+                        latents, num_inversions = inversion_step(
+                            self,
+                            latents,
+                            t,
+                            prompt_embeds,
+                            added_cond_kwargs,
+                            num_renoise_steps=num_renoise_steps,
+                            generator=generator
+                        )
+                elif inversion_step_type == 'error':
+                    latents, num_inversions = inversion_step_error_stop(
+                        self,
+                        latents,
+                        t,
+                        prompt_embeds,
+                        added_cond_kwargs,
+                        num_renoise_steps=num_renoise_steps,
+                        generator=generator
+                    )
+                elif inversion_step_type == 'error_diff':
+                    latents, num_inversions = inversion_step_error_diff_stop(
+                        self,
+                        latents,
+                        t,
+                        prompt_embeds,
+                        added_cond_kwargs,
+                        num_renoise_steps=num_renoise_steps,
+                        generator=generator
+                    )
+                else:
+                    raise ValueError(f"Unknown inversion_step_type: {inversion_step_type}")
 
+                all_latents.append(latents.clone())
+                all_num_inversions.append(num_inversions)
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
@@ -337,5 +390,6 @@ class SDXLDDIMPipeline(StableDiffusionXLImg2ImgPipeline):
 
         # Offload all models
         self.maybe_free_model_hooks()
-
-        return StableDiffusionXLPipelineOutput(images=image), all_latents, all_fixed_point_latents
+        mean_inversions = sum(all_num_inversions) / len(all_num_inversions)
+        
+        return StableDiffusionXLPipelineOutput(images=image), all_latents, all_fixed_point_latents, mean_inversions

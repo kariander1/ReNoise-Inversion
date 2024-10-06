@@ -95,6 +95,7 @@ def inversion_step(
     num_renoise_steps: int = 100,
     first_step_max_timestep: int = 250,
     generator=None,
+    epsilon: float = 0.0,
 ) -> torch.tensor:
     extra_step_kwargs = {}
     avg_range = pipe.cfg.average_first_step_range if t.item() < first_step_max_timestep else pipe.cfg.average_step_range
@@ -166,7 +167,210 @@ def inversion_step(
         
         pipe.scheduler.step_and_update_noise(noise_pred, t, approximated_z_tp1, z_t, return_dict=False, optimize_epsilon_type=pipe.cfg.perform_noise_correction)
 
-    return approximated_z_tp1
+    return approximated_z_tp1, i + 1
+
+def inversion_step_error_diff_stop(
+    pipe,
+    z_t: torch.tensor,
+    t: torch.tensor,
+    prompt_embeds,
+    added_cond_kwargs,
+    num_renoise_steps: int = 100,
+    first_step_max_timestep: int = 250,
+    generator=None,
+    epsilon: float = 0.0,  # Convergence threshold
+) -> torch.tensor:
+    extra_step_kwargs = {}
+    avg_range = pipe.cfg.average_first_step_range if t.item() < first_step_max_timestep else pipe.cfg.average_step_range
+    num_renoise_steps = min(pipe.cfg.max_num_renoise_steps_first_step, num_renoise_steps) if t.item() < first_step_max_timestep else num_renoise_steps
+
+    nosie_pred_avg = None
+    noise_pred_optimal = None
+    z_tp1_forward = pipe.scheduler.add_noise(pipe.z_0, pipe.noise, t.view((1))).detach()
+
+    approximated_z_tp1 = z_t.clone()
+    previous_z_tp1 = approximated_z_tp1.clone()  # Initialize to compare changes
+
+    noise_pred_last = None  # Store the last noise_pred for averaging the last two steps
+
+    # Initialize prev_diff with a large value or None to avoid breaking on the first iteration
+    prev_diff = float("inf")
+
+    for i in range(num_renoise_steps + 1):
+
+        with torch.no_grad():
+            # if noise regularization is enabled, we need to double the batch size for the first step
+            if pipe.cfg.noise_regularization_num_reg_steps > 0 and i == 0:
+                approximated_z_tp1 = torch.cat([z_tp1_forward, approximated_z_tp1])
+                prompt_embeds_in = torch.cat([prompt_embeds, prompt_embeds])
+                if added_cond_kwargs is not None:
+                    added_cond_kwargs_in = {}
+                    added_cond_kwargs_in['text_embeds'] = torch.cat([added_cond_kwargs['text_embeds'], added_cond_kwargs['text_embeds']])
+                    added_cond_kwargs_in['time_ids'] = torch.cat([added_cond_kwargs['time_ids'], added_cond_kwargs['time_ids']])
+                else:
+                    added_cond_kwargs_in = None
+            else:
+                prompt_embeds_in = prompt_embeds
+                added_cond_kwargs_in = added_cond_kwargs
+
+            noise_pred = unet_pass(pipe, approximated_z_tp1, t, prompt_embeds_in, added_cond_kwargs_in)
+
+            # if noise regularization is enabled, we need to split the batch size for the first step
+            if pipe.cfg.noise_regularization_num_reg_steps > 0 and i == 0:
+                noise_pred_optimal, noise_pred = noise_pred.chunk(2)
+                if pipe.do_classifier_free_guidance:
+                    noise_pred_optimal_uncond, noise_pred_optimal_text = noise_pred_optimal.chunk(2)
+                    noise_pred_optimal = noise_pred_optimal_uncond + pipe.guidance_scale * (noise_pred_optimal_text - noise_pred_optimal_uncond)
+                noise_pred_optimal = noise_pred_optimal.detach()
+
+            # perform guidance
+            if pipe.do_classifier_free_guidance:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + pipe.guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+            # Calculate average noise from the last two iterations
+            if noise_pred_last is not None:
+                nosie_pred_avg = (noise_pred_last + noise_pred) / 2
+
+            # Store the current noise_pred for the next iteration's average calculation
+            noise_pred_last = noise_pred.clone()
+
+        if i >= avg_range[0] or (not pipe.cfg.average_latent_estimations and i > 0):
+            noise_pred = noise_regularization(noise_pred, noise_pred_optimal, lambda_kl=pipe.cfg.noise_regularization_lambda_kl, lambda_ac=pipe.cfg.noise_regularization_lambda_ac, num_reg_steps=pipe.cfg.noise_regularization_num_reg_steps, num_ac_rolls=pipe.cfg.noise_regularization_num_ac_rolls, generator=generator)
+
+        approximated_z_tp1 = pipe.scheduler.inv_step(noise_pred, t, z_t, **extra_step_kwargs, return_dict=False)[0].detach()
+
+        # Calculate the difference between the previous and current z_tp1 (change to a normalized diff)
+        diff = torch.norm(approximated_z_tp1 - previous_z_tp1).item()
+        # print(f"Iteration {i}: Latent difference (current vs previous) = {diff}")
+
+        # Check for convergence based on change in diff from the previous iteration
+        if abs(diff - prev_diff) < epsilon:
+            # print(f"Convergence reached at iteration {i}, with difference change: {abs(diff - prev_diff)}")
+            break
+
+        # Update previous z_tp1 for the next iteration
+        previous_z_tp1 = approximated_z_tp1.clone()
+
+        # Update prev_diff with the current diff for the next iteration
+        prev_diff = diff
+
+    # Ensure average of the last two steps is performed
+    if pipe.cfg.average_latent_estimations and nosie_pred_avg is not None:
+        nosie_pred_avg = noise_regularization(nosie_pred_avg, noise_pred_optimal, lambda_kl=pipe.cfg.noise_regularization_lambda_kl, lambda_ac=pipe.cfg.noise_regularization_lambda_ac, num_reg_steps=pipe.cfg.noise_regularization_num_reg_steps, num_ac_rolls=pipe.cfg.noise_regularization_num_ac_rolls, generator=generator)
+        approximated_z_tp1 = pipe.scheduler.inv_step(nosie_pred_avg, t, z_t, **extra_step_kwargs, return_dict=False)[0].detach()
+
+    # perform noise correction
+    if pipe.cfg.perform_noise_correction:
+        noise_pred = unet_pass(pipe, approximated_z_tp1, t, prompt_embeds, added_cond_kwargs)
+
+        # perform guidance
+        if pipe.do_classifier_free_guidance:
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + pipe.guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+        pipe.scheduler.step_and_update_noise(noise_pred, t, approximated_z_tp1, z_t, return_dict=False, optimize_epsilon_type=pipe.cfg.perform_noise_correction)
+
+    return approximated_z_tp1, i + 1
+
+
+def inversion_step_error_stop(
+    pipe,
+    z_t: torch.tensor,
+    t: torch.tensor,
+    prompt_embeds,
+    added_cond_kwargs,
+    num_renoise_steps: int = 100,
+    first_step_max_timestep: int = 250,
+    generator=None,
+    epsilon: float = 0.0,  # Convergence threshold
+) -> torch.tensor:
+    extra_step_kwargs = {}
+    avg_range = pipe.cfg.average_first_step_range if t.item() < first_step_max_timestep else pipe.cfg.average_step_range
+    num_renoise_steps = min(pipe.cfg.max_num_renoise_steps_first_step, num_renoise_steps) if t.item() < first_step_max_timestep else num_renoise_steps
+
+    nosie_pred_avg = None
+    noise_pred_optimal = None
+    z_tp1_forward = pipe.scheduler.add_noise(pipe.z_0, pipe.noise, t.view((1))).detach()
+
+    approximated_z_tp1 = z_t.clone()
+    previous_z_tp1 = approximated_z_tp1.clone()  # Initialize to compare changes
+
+    noise_pred_last = None  # Store the last noise_pred for averaging the last two steps
+
+    for i in range(num_renoise_steps + 1):
+
+        with torch.no_grad():
+            # if noise regularization is enabled, we need to double the batch size for the first step
+            if pipe.cfg.noise_regularization_num_reg_steps > 0 and i == 0:
+                approximated_z_tp1 = torch.cat([z_tp1_forward, approximated_z_tp1])
+                prompt_embeds_in = torch.cat([prompt_embeds, prompt_embeds])
+                if added_cond_kwargs is not None:
+                    added_cond_kwargs_in = {}
+                    added_cond_kwargs_in['text_embeds'] = torch.cat([added_cond_kwargs['text_embeds'], added_cond_kwargs['text_embeds']])
+                    added_cond_kwargs_in['time_ids'] = torch.cat([added_cond_kwargs['time_ids'], added_cond_kwargs['time_ids']])
+                else:
+                    added_cond_kwargs_in = None
+            else:
+                prompt_embeds_in = prompt_embeds
+                added_cond_kwargs_in = added_cond_kwargs
+
+            noise_pred = unet_pass(pipe, approximated_z_tp1, t, prompt_embeds_in, added_cond_kwargs_in)
+
+            # if noise regularization is enabled, we need to split the batch size for the first step
+            if pipe.cfg.noise_regularization_num_reg_steps > 0 and i == 0:
+                noise_pred_optimal, noise_pred = noise_pred.chunk(2)
+                if pipe.do_classifier_free_guidance:
+                    noise_pred_optimal_uncond, noise_pred_optimal_text = noise_pred_optimal.chunk(2)
+                    noise_pred_optimal = noise_pred_optimal_uncond + pipe.guidance_scale * (noise_pred_optimal_text - noise_pred_optimal_uncond)
+                noise_pred_optimal = noise_pred_optimal.detach()
+
+            # perform guidance
+            if pipe.do_classifier_free_guidance:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + pipe.guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+            # Calculate average noise from the last two iterations
+            if noise_pred_last is not None:
+                nosie_pred_avg = (noise_pred_last + noise_pred) / 2
+
+            # Store the current noise_pred for the next iteration's average calculation
+            noise_pred_last = noise_pred.clone()
+
+        if i >= avg_range[0] or (not pipe.cfg.average_latent_estimations and i > 0):
+            noise_pred = noise_regularization(noise_pred, noise_pred_optimal, lambda_kl=pipe.cfg.noise_regularization_lambda_kl, lambda_ac=pipe.cfg.noise_regularization_lambda_ac, num_reg_steps=pipe.cfg.noise_regularization_num_reg_steps, num_ac_rolls=pipe.cfg.noise_regularization_num_ac_rolls, generator=generator)
+
+        approximated_z_tp1 = pipe.scheduler.inv_step(noise_pred, t, z_t, **extra_step_kwargs, return_dict=False)[0].detach()
+
+        # Calculate the difference between the previous and current z_tp1
+        diff = torch.norm(approximated_z_tp1 - previous_z_tp1).item()
+        # print(f"Iteration {i}: Latent difference = {diff}")
+
+        # Check for convergence based on diff being less than epsilon
+        if diff < epsilon:
+            # print(f"Convergence reached at iteration {i}, with difference {diff}")
+            break
+
+        # Update previous z_tp1 for the next iteration
+        previous_z_tp1 = approximated_z_tp1.clone()
+
+    # Ensure average of the last two steps is performed
+    if pipe.cfg.average_latent_estimations and nosie_pred_avg is not None:
+        nosie_pred_avg = noise_regularization(nosie_pred_avg, noise_pred_optimal, lambda_kl=pipe.cfg.noise_regularization_lambda_kl, lambda_ac=pipe.cfg.noise_regularization_lambda_ac, num_reg_steps=pipe.cfg.noise_regularization_num_reg_steps, num_ac_rolls=pipe.cfg.noise_regularization_num_ac_rolls, generator=generator)
+        approximated_z_tp1 = pipe.scheduler.inv_step(nosie_pred_avg, t, z_t, **extra_step_kwargs, return_dict=False)[0].detach()
+
+    # perform noise correction
+    if pipe.cfg.perform_noise_correction:
+        noise_pred = unet_pass(pipe, approximated_z_tp1, t, prompt_embeds, added_cond_kwargs)
+
+        # perform guidance
+        if pipe.do_classifier_free_guidance:
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + pipe.guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+        pipe.scheduler.step_and_update_noise(noise_pred, t, approximated_z_tp1, z_t, return_dict=False, optimize_epsilon_type=pipe.cfg.perform_noise_correction)
+
+    return approximated_z_tp1, i + 1
 
 @torch.no_grad()
 def unet_pass(pipe, z_t, t, prompt_embeds, added_cond_kwargs):

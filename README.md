@@ -73,6 +73,8 @@ You can controll the inversion paremeters using the following attributes in the 
 - `noise_regularization_lambda_kl` - Noise regularization patch KL divergence lambda.
 - `perform_noise_correction` - Perform noise correction.
 - `fixed_point_iterations` - Number of prompt-aware iterations to perform. Default 2.
+- `inversion_step_type` - Type of inversion step. 'classic' will set the number of reNoise steps to 'num_inference_steps', 'error' will set a stopping condition when the L2 difference between consecutive latents are below epsilon, and 'error_diff' will set a stopping condition when the difference between consecutive errors are below epsilon. If not 'classic', the average from the reNoise steps will be taken from the two last. Default 'classic'.
+- `epsilon` - Epsilon used for the stopping condition in the inversion step. Default 0.
 
 In case of stochastic sampler add the following to use the same \epsilon_t as in the inversion process.
 ```

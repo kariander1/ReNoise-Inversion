@@ -89,7 +89,7 @@ def main_pipeline(
 
         original_image = Image.open(input_image).convert("RGB").resize(image_size)
 
-        res_image, inv_latent, noise, all_latents, all_fixed_point_latents = run_model(original_image,
+        res_image, inv_latent, noise, all_latents, all_fixed_point_latents, mean_inversions = run_model(original_image,
                                     src_prompt,
                                     config,
                                     latents=inv_latent,
