@@ -43,6 +43,7 @@ def run(init_image: Image,
     pipe_inference.cfg = cfg
     all_latents = None
     all_fixed_point_latents = None
+    mean_inversions = None
     
     if latents is None:
         print("Inverting...")
